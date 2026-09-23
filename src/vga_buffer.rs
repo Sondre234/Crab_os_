@@ -1,5 +1,6 @@
 //! VGA text console with bounded scrollback and a hardware cursor.
 use core::fmt::{self, Write};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 use volatile::Volatile;
 use x86_64::instructions::{interrupts, port::Port};
@@ -47,18 +48,18 @@ pub struct Position {
 }
 
 impl Position {
-    fn offset(self, bytes: usize) -> Self {
+    fn offset(self, bytes: usize, width: usize) -> Self {
         let offset = self.column + bytes;
         // Preserve pending wrap: a following newline must advance only once.
-        if offset > 0 && offset.is_multiple_of(BUFFER_WIDTH) {
+        if offset > 0 && offset.is_multiple_of(width) {
             Self {
-                line: self.line + offset / BUFFER_WIDTH - 1,
-                column: BUFFER_WIDTH,
+                line: self.line + offset / width - 1,
+                column: width,
             }
         } else {
             Self {
-                line: self.line + offset / BUFFER_WIDTH,
-                column: offset % BUFFER_WIDTH,
+                line: self.line + offset / width,
+                column: offset % width,
             }
         }
     }
@@ -71,17 +72,34 @@ pub struct Writer {
     first_line: usize,
     view_top: usize,
     color: u8,
+    columns: usize,
 }
 
-// Const initialization keeps the scrollback buffer off the kernel stack/heap.
-pub static WRITER: Mutex<Writer> = Mutex::new(Writer {
-    lines: [[BLANK; BUFFER_WIDTH]; SCROLLBACK_LINES],
-    cursor: Position { line: 0, column: 0 },
-    last_line: 0,
-    first_line: 0,
-    view_top: 0,
-    color: Color::LightGray as u8,
-});
+impl Writer {
+    const fn new() -> Self {
+        Self {
+            lines: [[BLANK; BUFFER_WIDTH]; SCROLLBACK_LINES],
+            cursor: Position { line: 0, column: 0 },
+            last_line: 0,
+            first_line: 0,
+            view_top: 0,
+            color: Color::LightGray as u8,
+            columns: BUFFER_WIDTH,
+        }
+    }
+}
+
+// Const initialization keeps both scrollback rings out of the kernel stack.
+static TERMINALS: [Mutex<Writer>; 2] = [Mutex::new(Writer::new()), Mutex::new(Writer::new())];
+static ACTIVE_TERMINAL: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_active_terminal(index: usize) {
+    ACTIVE_TERMINAL.store(index.min(1), Ordering::Relaxed);
+}
+
+pub fn active_terminal() -> usize {
+    ACTIVE_TERMINAL.load(Ordering::Relaxed)
+}
 
 impl Writer {
     pub fn clear(&mut self) {
@@ -101,6 +119,11 @@ impl Writer {
 
     pub fn position(&self) -> Position {
         self.cursor
+    }
+
+    pub fn set_columns(&mut self, columns: usize) {
+        assert!((1..=BUFFER_WIDTH).contains(&columns));
+        self.columns = columns;
     }
 
     fn live_top(&self) -> usize {
@@ -132,7 +155,7 @@ impl Writer {
                 }
             }
             byte => {
-                if self.cursor.column == BUFFER_WIDTH {
+                if self.cursor.column == self.columns {
                     self.write_byte(b'\n');
                 }
                 self.lines[self.cursor.line % SCROLLBACK_LINES][self.cursor.column] = ScreenChar {
@@ -168,7 +191,7 @@ impl Writer {
         for _ in text.len()..old_len {
             self.write_byte(b' ');
         }
-        self.cursor = anchor.offset(cursor);
+        self.cursor = anchor.offset(cursor, self.columns);
         self.ensure_line(self.cursor.line);
     }
 
@@ -181,78 +204,6 @@ impl Writer {
 
     pub fn scroll_down(&mut self) {
         self.view_top = (self.view_top + BUFFER_HEIGHT - 1).min(self.live_top());
-    }
-
-    fn render(&self) {
-        let buffer = 0xb8000 as *mut Volatile<ScreenChar>;
-        for row in 0..BUFFER_HEIGHT {
-            for col in 0..BUFFER_WIDTH {
-                unsafe { (*buffer.add(row * BUFFER_WIDTH + col)).write(BLANK) };
-            }
-        }
-        draw_cell(
-            buffer,
-            0,
-            0,
-            b" CrabOS desktop   [1] Terminal  [2] Terminal",
-            Color::White,
-            Color::Blue,
-        );
-        draw_cell(
-            buffer,
-            0,
-            24,
-            b"PS/2 mouse: drag a title bar",
-            Color::LightGray,
-            Color::DarkGray,
-        );
-        let windows = crate::desktop::windows();
-        for (index, (x, y)) in windows.into_iter().enumerate() {
-            draw_window(buffer, x as usize, y as usize, index);
-        }
-        // The primary shell is currently the shared kernel console. Show its
-        // visible history in the first panel; the second panel is ready for a
-        // separate shell session in a later desktop increment.
-        let (x, y) = windows[0];
-        for row in 0..16 {
-            let line = self.view_top + row;
-            if line <= self.last_line {
-                for col in 0..36 {
-                    let cell = self.lines[line % SCROLLBACK_LINES][col];
-                    unsafe {
-                        (*buffer.add((y as usize + 2 + row) * BUFFER_WIDTH + x as usize + 1 + col))
-                            .write(cell)
-                    };
-                }
-            }
-        }
-        let (pointer_x, pointer_y) = crate::desktop::pointer();
-        draw_cell(
-            buffer,
-            pointer_y as usize,
-            pointer_x as usize,
-            b"+",
-            Color::White,
-            Color::Blue,
-        );
-        let visible = false;
-        unsafe {
-            let mut index = Port::<u8>::new(0x3d4);
-            let mut data = Port::<u8>::new(0x3d5);
-            index.write(0x0a);
-            data.write(if visible { 14 } else { 0x20 });
-            if visible {
-                index.write(0x0b);
-                data.write(15);
-                let position = ((self.cursor.line - self.view_top) * BUFFER_WIDTH
-                    + self.cursor.column.min(BUFFER_WIDTH - 1))
-                    as u16;
-                index.write(0x0f);
-                data.write(position as u8);
-                index.write(0x0e);
-                data.write((position >> 8) as u8);
-            }
-        }
     }
 }
 
@@ -300,41 +251,12 @@ fn draw_window(buffer: *mut Volatile<ScreenChar>, x: usize, y: usize, index: usi
             );
         }
     }
-    draw_cell(buffer, y, x, title, Color::White, Color::Blue);
-    if index == 1 {
-        draw_cell(
-            buffer,
-            y + 2,
-            x + 2,
-            b"crabsh terminal",
-            Color::LightCyan,
-            Color::Black,
-        );
-        draw_cell(
-            buffer,
-            y + 4,
-            x + 2,
-            b"Second shell session",
-            Color::LightGray,
-            Color::Black,
-        );
-        draw_cell(
-            buffer,
-            y + 6,
-            x + 2,
-            b"is coming next.",
-            Color::LightGray,
-            Color::Black,
-        );
-        draw_cell(
-            buffer,
-            y + 17,
-            x + 2,
-            b"crabsh$ _",
-            Color::LightGreen,
-            Color::Black,
-        );
-    }
+    let title_bg = if crate::desktop::active_terminal() == index {
+        Color::Blue
+    } else {
+        Color::DarkGray
+    };
+    draw_cell(buffer, y, x, title, Color::White, title_bg);
 }
 
 impl fmt::Write for Writer {
@@ -345,12 +267,73 @@ impl fmt::Write for Writer {
 }
 
 pub fn with_writer<R>(f: impl FnOnce(&mut Writer) -> R) -> R {
-    interrupts::without_interrupts(|| {
-        let mut writer = WRITER.lock();
-        let result = f(&mut writer);
-        writer.render();
-        result
-    })
+    let result = interrupts::without_interrupts(|| {
+        let mut writer = TERMINALS[active_terminal()].lock();
+        f(&mut writer)
+    });
+    render_desktop();
+    result
+}
+
+fn render_desktop() {
+    interrupts::without_interrupts(render_desktop_inner);
+}
+
+fn render_desktop_inner() {
+    let buffer = 0xb8000 as *mut Volatile<ScreenChar>;
+    for row in 0..BUFFER_HEIGHT {
+        for col in 0..BUFFER_WIDTH {
+            unsafe { (*buffer.add(row * BUFFER_WIDTH + col)).write(BLANK) };
+        }
+    }
+    draw_cell(
+        buffer,
+        0,
+        0,
+        b" CrabOS desktop   [1] Terminal  [2] Terminal",
+        Color::White,
+        Color::Blue,
+    );
+    draw_cell(
+        buffer,
+        0,
+        24,
+        b"PS/2 mouse: drag title bars; click to focus",
+        Color::LightGray,
+        Color::DarkGray,
+    );
+    let windows = crate::desktop::windows();
+    let active = crate::desktop::active_terminal();
+    for index in [1 - active, active] {
+        let (x, y) = windows[index];
+        draw_window(buffer, x as usize, y as usize, index);
+        let terminal = TERMINALS[index].lock();
+        for row in 0..16 {
+            let line = terminal.view_top + row;
+            if line <= terminal.last_line {
+                for col in 0..36 {
+                    let cell = terminal.lines[line % SCROLLBACK_LINES][col];
+                    let screen_index = (y as usize + 2 + row) * BUFFER_WIDTH + x as usize + 1 + col;
+                    unsafe { (*buffer.add(screen_index)).write(cell) };
+                }
+            }
+        }
+    }
+    let (pointer_x, pointer_y) = crate::desktop::pointer();
+    draw_cell(
+        buffer,
+        pointer_y as usize,
+        pointer_x as usize,
+        b"+",
+        Color::White,
+        Color::Blue,
+    );
+    unsafe {
+        let mut index = Port::<u8>::new(0x3d4);
+        let mut data = Port::<u8>::new(0x3d5);
+        index.write(0x0a);
+        data.write(0x20);
+    }
 }
 
 /// Redraw the current console and desktop without changing its contents.

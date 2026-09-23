@@ -23,6 +23,7 @@ struct Desktop {
     pointer_x: i16,
     pointer_y: i16,
     buttons: u8,
+    active: usize,
 }
 
 static DESKTOP: Mutex<Desktop> = Mutex::new(Desktop {
@@ -33,6 +34,7 @@ static DESKTOP: Mutex<Desktop> = Mutex::new(Desktop {
     pointer_x: 40,
     pointer_y: 12,
     buttons: 0,
+    active: 0,
 });
 
 /// Accept one byte from the PS/2 mouse packet stream.
@@ -54,6 +56,13 @@ pub fn mouse_byte(byte: u8) {
             let pressed = flags & 1 != 0 && desktop.buttons & 1 == 0;
             if pressed {
                 let (x, y) = (desktop.pointer_x, desktop.pointer_y);
+                if let Some((index, _)) =
+                    desktop.windows.iter().enumerate().find(|(_, w)| {
+                        x >= w.x && x < w.x + WINDOW_W && y >= w.y && y < w.y + WINDOW_H
+                    })
+                {
+                    desktop.active = index;
+                }
                 desktop.drag = desktop.windows.iter().enumerate().find_map(|(i, w)| {
                     (x >= w.x && x < w.x + WINDOW_W && y == w.y).then_some((i, x - w.x, y - w.y))
                 });
@@ -69,10 +78,16 @@ pub fn mouse_byte(byte: u8) {
             }
             desktop.buttons = flags & 7;
             desktop.packet_len = 0;
+            let active = desktop.active;
             drop(desktop);
+            crate::vga_buffer::set_active_terminal(active);
             crate::vga_buffer::refresh();
         }
     });
+}
+
+pub fn active_terminal() -> usize {
+    interrupts::without_interrupts(|| DESKTOP.lock().active)
 }
 
 /// Current text-cell position of the mouse cursor.

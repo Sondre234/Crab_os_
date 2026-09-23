@@ -96,7 +96,13 @@ fn decoder() -> Keyboard<ConsoleLayout, ScancodeSet1> {
 pub async fn run_shell(info: SystemInfo) {
     let mut scancodes = ScancodeStream::new();
     let mut keyboard = decoder();
-    let mut shell = Shell::new(info);
+    crate::vga_buffer::set_active_terminal(0);
+    crate::vga_buffer::with_writer(|writer| writer.set_columns(36));
+    let mut first_shell = Shell::new(info);
+    crate::vga_buffer::set_active_terminal(1);
+    crate::vga_buffer::with_writer(|writer| writer.set_columns(36));
+    let mut second_shell = Shell::new(info);
+    crate::vga_buffer::set_active_terminal(0);
     let mut dropped = dropped_scancodes();
 
     while let Some(scancode) = scancodes.next().await {
@@ -111,13 +117,19 @@ pub async fn run_shell(info: SystemInfo) {
             });
             keyboard = decoder();
             dropped = current_dropped;
-            shell.input_lost();
+            match crate::desktop::active_terminal() {
+                0 => first_shell.input_lost(),
+                _ => second_shell.input_lost(),
+            }
             continue;
         }
         if let Ok(Some(key_event)) = keyboard.add_byte(scancode)
             && let Some(key) = keyboard.process_keyevent(key_event)
         {
-            shell.handle_key(key);
+            match crate::desktop::active_terminal() {
+                0 => first_shell.handle_key(key),
+                _ => second_shell.handle_key(key),
+            }
         }
     }
 }

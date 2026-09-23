@@ -7,6 +7,7 @@ use crate::vga_buffer::{self, Color};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[derive(Clone, Copy)]
 pub struct SystemInfo {
     pub usable_memory: u64,
     vendor: [u8; 12],
