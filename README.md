@@ -1,7 +1,7 @@
 # CrabOS
 
-A small x86_64 Rust kernel with an interactive VGA console and a native
-fastfetch-style system summary. It boots directly into **crabsh**.
+A small x86_64 Rust kernel with a mouse-driven, two-window VGA text desktop.
+Each terminal runs **crabsh** with separate command history and scrollback.
 
 ## Run
 
@@ -14,9 +14,9 @@ the console.
 cargo run --locked
 ~~~
 
-Type commands in QEMU's display window. The guest currently uses a US keyboard
-layout, regardless of the host layout. QEMU's usual Ctrl+Alt+G releases captured
-input.
+Type commands in either terminal in QEMU's display window. Click a terminal to
+focus it, or drag its title bar to move it. The guest uses a US keyboard layout,
+regardless of the host layout. QEMU's usual Ctrl+Alt+G releases captured input.
 
 To build an image without opening a window:
 
@@ -93,8 +93,9 @@ allocation bytes, excluding allocator metadata, size-class padding, and cached
 blocks. Boot-usable RAM is not current free RAM.
 
 The guest identity is a console label, not an authentication system. There is
-no filesystem, process loader, userspace, network stack, or desktop yet.
-Porting upstream Fastfetch needs additional runtime and OS interfaces.
+no filesystem, process loader, userspace, or network stack. The desktop is a
+kernel VGA text-mode interface, not a graphical userspace environment. Porting
+upstream Fastfetch needs additional runtime and OS interfaces.
 
 ## Verification
 
@@ -121,6 +122,7 @@ and clippy with --target-dir target/console-check to use a separate build cache.
 ## Source map
 
 - src/vga_buffer.rs: screen history, wrapping, rendering and hardware cursor.
+- src/desktop.rs: draggable terminal windows and mouse focus.
 - src/shell.rs: bounded line editor, history, command parser and built-ins.
 - src/system.rs: boot/CPU facts and the fastfetch display.
 - src/task/keyboard.rs: interrupt-fed keyboard stream and layout decoding.
