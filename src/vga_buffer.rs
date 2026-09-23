@@ -26,7 +26,7 @@ pub enum Color {
     White = 15,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 struct ScreenChar {
     ascii_character: u8,
@@ -39,6 +39,7 @@ const BLANK: ScreenChar = ScreenChar {
 };
 pub const BUFFER_HEIGHT: usize = 25;
 pub const BUFFER_WIDTH: usize = 80;
+const SCREEN_CELLS: usize = BUFFER_HEIGHT * BUFFER_WIDTH;
 pub const SCROLLBACK_LINES: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,6 +93,16 @@ impl Writer {
 // Const initialization keeps both scrollback rings out of the kernel stack.
 static TERMINALS: [Mutex<Writer>; 2] = [Mutex::new(Writer::new()), Mutex::new(Writer::new())];
 static ACTIVE_TERMINAL: AtomicUsize = AtomicUsize::new(0);
+static FRAME: Mutex<[ScreenChar; SCREEN_CELLS]> = Mutex::new([BLANK; SCREEN_CELLS]);
+static PREVIOUS_FRAME: Mutex<FrameCache> = Mutex::new(FrameCache {
+    cells: [BLANK; SCREEN_CELLS],
+    valid: false,
+});
+
+struct FrameCache {
+    cells: [ScreenChar; SCREEN_CELLS],
+    valid: bool,
+}
 
 pub fn set_active_terminal(index: usize) {
     ACTIVE_TERMINAL.store(index.min(1), Ordering::Relaxed);
@@ -208,7 +219,7 @@ impl Writer {
 }
 
 fn draw_cell(
-    buffer: *mut Volatile<ScreenChar>,
+    frame: &mut [ScreenChar; SCREEN_CELLS],
     row: usize,
     col: usize,
     text: &[u8],
@@ -223,26 +234,26 @@ fn draw_cell(
             ascii_character: byte,
             color_code: (bg as u8) << 4 | fg as u8,
         };
-        unsafe { (*buffer.add(row * BUFFER_WIDTH + col + offset)).write(cell) };
+        frame[row * BUFFER_WIDTH + col + offset] = cell;
     }
 }
 
-fn draw_window(buffer: *mut Volatile<ScreenChar>, x: usize, y: usize, index: usize) {
+fn draw_window(frame: &mut [ScreenChar; SCREEN_CELLS], x: usize, y: usize, index: usize) {
     let title = if index == 0 {
         b" Terminal 1 - crabsh " as &[u8]
     } else {
         b" Terminal 2 - crabsh "
     };
     for col in 0..38 {
-        draw_cell(buffer, y, x + col, b" ", Color::White, Color::DarkGray);
-        draw_cell(buffer, y + 19, x + col, b" ", Color::White, Color::DarkGray);
+        draw_cell(frame, y, x + col, b" ", Color::White, Color::DarkGray);
+        draw_cell(frame, y + 19, x + col, b" ", Color::White, Color::DarkGray);
     }
     for row in 1..19 {
-        draw_cell(buffer, y + row, x, b" ", Color::White, Color::DarkGray);
-        draw_cell(buffer, y + row, x + 37, b" ", Color::White, Color::DarkGray);
+        draw_cell(frame, y + row, x, b" ", Color::White, Color::DarkGray);
+        draw_cell(frame, y + row, x + 37, b" ", Color::White, Color::DarkGray);
         for col in 1..37 {
             draw_cell(
-                buffer,
+                frame,
                 y + row,
                 x + col,
                 b" ",
@@ -256,7 +267,7 @@ fn draw_window(buffer: *mut Volatile<ScreenChar>, x: usize, y: usize, index: usi
     } else {
         Color::DarkGray
     };
-    draw_cell(buffer, y, x, title, Color::White, title_bg);
+    draw_cell(frame, y, x, title, Color::White, title_bg);
 }
 
 impl fmt::Write for Writer {
@@ -281,13 +292,10 @@ fn render_desktop() {
 
 fn render_desktop_inner() {
     let buffer = 0xb8000 as *mut Volatile<ScreenChar>;
-    for row in 0..BUFFER_HEIGHT {
-        for col in 0..BUFFER_WIDTH {
-            unsafe { (*buffer.add(row * BUFFER_WIDTH + col)).write(BLANK) };
-        }
-    }
+    let mut frame = FRAME.lock();
+    frame.fill(BLANK);
     draw_cell(
-        buffer,
+        &mut frame,
         0,
         0,
         b" CrabOS desktop   [1] Terminal  [2] Terminal",
@@ -295,7 +303,7 @@ fn render_desktop_inner() {
         Color::Blue,
     );
     draw_cell(
-        buffer,
+        &mut frame,
         0,
         24,
         b"PS/2 mouse: drag title bars; click to focus",
@@ -306,7 +314,7 @@ fn render_desktop_inner() {
     let active = crate::desktop::active_terminal();
     for index in [1 - active, active] {
         let (x, y) = windows[index];
-        draw_window(buffer, x as usize, y as usize, index);
+        draw_window(&mut frame, x as usize, y as usize, index);
         let terminal = TERMINALS[index].lock();
         for row in 0..16 {
             let line = terminal.view_top + row;
@@ -314,20 +322,28 @@ fn render_desktop_inner() {
                 for col in 0..36 {
                     let cell = terminal.lines[line % SCROLLBACK_LINES][col];
                     let screen_index = (y as usize + 2 + row) * BUFFER_WIDTH + x as usize + 1 + col;
-                    unsafe { (*buffer.add(screen_index)).write(cell) };
+                    frame[screen_index] = cell;
                 }
             }
         }
     }
     let (pointer_x, pointer_y) = crate::desktop::pointer();
     draw_cell(
-        buffer,
+        &mut frame,
         pointer_y as usize,
         pointer_x as usize,
         b"+",
         Color::White,
         Color::Blue,
     );
+    let mut previous = PREVIOUS_FRAME.lock();
+    for index in 0..SCREEN_CELLS {
+        if !previous.valid || previous.cells[index] != frame[index] {
+            unsafe { (*buffer.add(index)).write(frame[index]) };
+            previous.cells[index] = frame[index];
+        }
+    }
+    previous.valid = true;
     unsafe {
         let mut index = Port::<u8>::new(0x3d4);
         let mut data = Port::<u8>::new(0x3d5);
