@@ -1,6 +1,10 @@
 //! Small text-mode desktop layout and PS/2 mouse window dragging.
 //!
 //! The current kernel uses VGA text mode, so windows are character-cell panels.
+use core::future::poll_fn;
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::Poll;
+use futures_util::task::AtomicWaker;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
 
@@ -8,6 +12,8 @@ const SCREEN_W: i16 = 80;
 const SCREEN_H: i16 = 25;
 const WINDOW_W: i16 = 38;
 const WINDOW_H: i16 = 20;
+const MOUSE_CELLS_PER_COUNT_X: i16 = 8;
+const MOUSE_CELLS_PER_COUNT_Y: i16 = 16;
 
 #[derive(Clone, Copy)]
 struct Window {
@@ -22,6 +28,8 @@ struct Desktop {
     packet_len: usize,
     pointer_x: i16,
     pointer_y: i16,
+    motion_x: i16,
+    motion_y: i16,
     buttons: u8,
     active: usize,
 }
@@ -33,9 +41,13 @@ static DESKTOP: Mutex<Desktop> = Mutex::new(Desktop {
     packet_len: 0,
     pointer_x: 40,
     pointer_y: 12,
+    motion_x: 0,
+    motion_y: 0,
     buttons: 0,
     active: 0,
 });
+static REDRAW_PENDING: AtomicBool = AtomicBool::new(false);
+static REDRAW_WAKER: AtomicWaker = AtomicWaker::new();
 
 /// Accept one byte from the PS/2 mouse packet stream.
 pub fn mouse_byte(byte: u8) {
@@ -51,8 +63,14 @@ pub fn mouse_byte(byte: u8) {
             let flags = desktop.packet[0];
             let dx = desktop.packet[1] as i8 as i16;
             let dy = desktop.packet[2] as i8 as i16;
-            desktop.pointer_x = (desktop.pointer_x + dx).clamp(0, SCREEN_W - 1);
-            desktop.pointer_y = (desktop.pointer_y - dy).clamp(0, SCREEN_H - 1);
+            desktop.motion_x += dx;
+            desktop.motion_y += dy;
+            let move_x = desktop.motion_x / MOUSE_CELLS_PER_COUNT_X;
+            let move_y = desktop.motion_y / MOUSE_CELLS_PER_COUNT_Y;
+            desktop.motion_x %= MOUSE_CELLS_PER_COUNT_X;
+            desktop.motion_y %= MOUSE_CELLS_PER_COUNT_Y;
+            desktop.pointer_x = (desktop.pointer_x + move_x).clamp(0, SCREEN_W - 1);
+            desktop.pointer_y = (desktop.pointer_y - move_y).clamp(0, SCREEN_H - 1);
             let pressed = flags & 1 != 0 && desktop.buttons & 1 == 0;
             if pressed {
                 let (x, y) = (desktop.pointer_x, desktop.pointer_y);
@@ -81,9 +99,26 @@ pub fn mouse_byte(byte: u8) {
             let active = desktop.active;
             drop(desktop);
             crate::vga_buffer::set_active_terminal(active);
-            crate::vga_buffer::refresh();
+            REDRAW_PENDING.store(true, Ordering::Release);
+            REDRAW_WAKER.wake();
         }
     });
+}
+
+/// Repaint requests are serviced in task context so IRQ12 stays short.
+pub async fn run_redraw_worker() {
+    loop {
+        poll_fn(|context| {
+            REDRAW_WAKER.register(context.waker());
+            if REDRAW_PENDING.swap(false, Ordering::AcqRel) {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+        crate::vga_buffer::refresh();
+    }
 }
 
 pub fn active_terminal() -> usize {

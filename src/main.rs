@@ -33,6 +33,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let info = SystemInfo::new(&boot_info.memory_map);
         let mut executor = Executor::new();
         executor.spawn(Task::new(keyboard::run_shell(info)));
+        executor.spawn(Task::new(crab_os::desktop::run_redraw_worker()));
         executor.run();
     }
 }
