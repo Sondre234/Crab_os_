@@ -22,6 +22,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
     crab_os::allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap init failed");
 
+    #[cfg(not(test))]
+    if let Err(error) = crab_os::net::init(&mut mapper, &mut frame_allocator, phys_mem_offset) {
+        crab_os::serial_println!("Network initialization failed: {}", error);
+    }
+
     #[cfg(test)]
     {
         test_main();

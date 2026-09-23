@@ -2,7 +2,7 @@
 """Test the PS/2 -> shell -> VGA path in an isolated, headless QEMU.
 
 Run cargo bootimage --locked, then python tests/smoke_console.py.
-Uses only Python's standard library. Connects no host disks or network.
+Uses only Python's standard library.
 """
 import argparse
 import json
@@ -117,7 +117,7 @@ class Console:
         self.type("clear\n")
 
 
-def exercise(console, screenshot):
+def exercise(console, screenshot, nic=False):
     console.expect("Click Terminal to get started", timeout=15)
     if screenshot:
         console.command("screendump", {"filename": str(screenshot.with_stem("desktop-empty").resolve())})
@@ -126,6 +126,10 @@ def exercise(console, screenshot):
     console.expect("Welcome to CrabOS")
     console.expect("shaolin@crabos:~$")
     console.expect("RAM (boot usable):")
+    if nic:
+        console.type("net\n")
+        console.expect("QEMU e1000")
+        console.expect("link up")
     print("PASS: boot, native fastfetch and prompt", flush=True)
 
     console.clean()
@@ -258,6 +262,7 @@ def main():
     parser.add_argument("--image", type=Path,
                         default=Path("target/x86_64-crab_os/debug/bootimage-crab_os.bin"))
     parser.add_argument("--screenshot", type=Path, help="Optional PPM screenshot output")
+    parser.add_argument("--nic", action="store_true")
     args = parser.parse_args()
     if not args.image.is_file():
         parser.error("boot image missing; run cargo bootimage --locked first")
@@ -267,7 +272,7 @@ def main():
         process = subprocess.Popen([
             "qemu-system-x86_64", "-m", "128M", "-display", "none",
             "-drive", f"format=raw,file={args.image.resolve()},snapshot=on",
-            "-no-reboot", "-no-shutdown", "-nic", "none",
+            "-no-reboot", "-no-shutdown", "-nic", "user,model=e1000" if args.nic else "none",
             "-serial", f"file:{directory / 'serial.txt'}",
             "-qmp", f"unix:{endpoint},server=on,wait=off",
         ], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -296,7 +301,7 @@ def main():
                     assert "QMP" in greeting, greeting
                     console = Console(stream, directory)
                     console.command("qmp_capabilities")
-                    exercise(console, args.screenshot)
+                    exercise(console, args.screenshot, args.nic)
         finally:
             process.terminate()
             try:

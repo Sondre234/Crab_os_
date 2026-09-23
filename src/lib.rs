@@ -9,6 +9,7 @@ pub mod desktop;
 pub mod gdt;
 pub mod interrupts;
 pub mod memory;
+pub mod net;
 pub mod pci;
 pub mod serial;
 pub mod shell;

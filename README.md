@@ -15,6 +15,13 @@ the console.
 cargo run --locked
 ~~~
 
+To run with QEMU's emulated Intel e1000 Ethernet adapter and user networking:
+
+~~~sh
+cargo bootimage --locked
+qemu-system-x86_64 -m 128M -drive format=raw,file=target/x86_64-crab_os/debug/bootimage-crab_os.bin,snapshot=on -nic user,model=e1000
+~~~
+
 Click the Terminal desktop icon to open crabsh, then type in QEMU's display
 window. Click a terminal to focus it, or drag its title bar to move it. Ctrl+Q
 opens another terminal; Ctrl+C or the title-bar [x] closes a terminal. The
@@ -78,6 +85,7 @@ width.
 | history | Recent commands |
 | whoami / hostname | Console identity |
 | lspci | Detect an Intel I225-V Ethernet controller |
+| net | Show the QEMU e1000 MAC address and link state |
 
 Commands accept --help; fastfetch also accepts --version. For example:
 
@@ -114,6 +122,7 @@ cargo clippy --all-targets --locked
 cargo fmt --check
 cargo bootimage --locked
 python tests/smoke_console.py --screenshot target/console.ppm
+python tests/smoke_console.py --nic
 ~~~
 
 Kernel tests run inside QEMU and cover the editor, parser, history, display,

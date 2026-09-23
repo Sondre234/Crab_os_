@@ -34,6 +34,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "lspci",
         "Find the supported Intel I225-V Ethernet controller",
     ),
+    ("net", "Show Ethernet controller and link status"),
 ];
 
 #[derive(Clone, Copy)]
@@ -545,6 +546,19 @@ impl Shell {
                     address.bus, address.device, address.function
                 ),
                 None => println!("Intel I225-V Ethernet [8086:15f3] not found"),
+            },
+            "net" => match crate::net::status() {
+                Some((mac, link)) => println!(
+                    "QEMU e1000 {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} link {}",
+                    mac[0],
+                    mac[1],
+                    mac[2],
+                    mac[3],
+                    mac[4],
+                    mac[5],
+                    if link { "up" } else { "down" }
+                ),
+                None => println!("No initialized Ethernet controller"),
             },
             _ => unreachable!(),
         }

@@ -93,6 +93,27 @@ pub fn create_example_mapping(
     map_to_result.expect("map_to failed").flush();
 }
 
+pub fn map_mmio(
+    physical_start: PhysAddr,
+    length: usize,
+    mapper: &mut OffsetPageTable,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+) -> Result<VirtAddr, x86_64::structures::paging::mapper::MapToError<Size4KiB>> {
+    use x86_64::structures::paging::PageTableFlags as Flags;
+
+    let physical_page = physical_start.align_down(4096u64);
+    let offset = physical_start.as_u64() - physical_page.as_u64();
+    let page_count = (offset as usize + length).div_ceil(4096);
+    let virtual_start = VirtAddr::new(0x_5555_0000_0000);
+    for index in 0..page_count {
+        let page = Page::containing_address(virtual_start + index as u64 * 4096);
+        let frame = PhysFrame::containing_address(physical_page + index as u64 * 4096);
+        let flags = Flags::PRESENT | Flags::WRITABLE | Flags::NO_CACHE | Flags::WRITE_THROUGH;
+        unsafe { mapper.map_to(page, frame, flags, frame_allocator)?.flush() };
+    }
+    Ok(virtual_start + offset)
+}
+
 pub struct EmptyFrameAllocator;
 
 unsafe impl FrameAllocator<Size4KiB> for EmptyFrameAllocator {
