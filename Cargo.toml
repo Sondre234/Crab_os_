@@ -1,0 +1,58 @@
+[package]
+name = "crab_os"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+linked_list_allocator = "0.9.0"
+volatile = "0.2.6"
+spin = "0.5.2"
+x86_64 = "0.15.5"
+uart_16550 = "0.6.0"
+pic8259 = "0.11.0"
+pc-keyboard = "0.7.0"
+bootloader = {version = "0.9", features = ["map_physical_memory"]}
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[lints.rust]
+unused = "allow"
+
+[[bin]]
+name = "crab_os"
+test = true
+bench = false
+
+[dependencies.lazy_static]
+version = "1.0"
+features = ["spin_no_std"]
+
+[package.metadata.bootimage]
+test-success-exit-code = 33
+test-args = [
+    "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", "-serial", "stdio",
+    "-display", "none"
+]
+test-timeout = 300 #5min
+
+[[test]]
+name = "stack_overflow"
+harness = false
+
+[dependencies.crossbeam-queue]
+version = "0.3.11"
+default-features = false
+features = ["alloc"]
+
+[dependencies.conquer-once]
+version = "0.2.0"
+default-features = false
+
+[dependencies.futures-util]
+version = "0.3.4"
+default-features = false
+features = ["alloc"]
