@@ -30,6 +30,10 @@ const COMMANDS: &[(&str, &str)] = &[
     ("history", "Show the last 16 commands"),
     ("whoami", "Show the console user"),
     ("hostname", "Show the system name"),
+    (
+        "lspci",
+        "Find the supported Intel I225-V Ethernet controller",
+    ),
 ];
 
 #[derive(Clone, Copy)]
@@ -535,6 +539,13 @@ impl Shell {
             }
             "whoami" => println!("shaolin"),
             "hostname" => println!("crabos"),
+            "lspci" => match crate::pci::find_i225_v() {
+                Some(address) => println!(
+                    "{:02x}:{:02x}.{} Intel I225-V Ethernet [8086:15f3]",
+                    address.bus, address.device, address.function
+                ),
+                None => println!("Intel I225-V Ethernet [8086:15f3] not found"),
+            },
             _ => unreachable!(),
         }
     }

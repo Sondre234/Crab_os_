@@ -77,6 +77,7 @@ width.
 | mem | Boot-usable RAM, heap capacity and live allocation payloads |
 | history | Recent commands |
 | whoami / hostname | Console identity |
+| lspci | Detect an Intel I225-V Ethernet controller |
 
 Commands accept --help; fastfetch also accepts --version. For example:
 
