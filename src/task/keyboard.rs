@@ -12,13 +12,27 @@ use pc_keyboard::{
     DecodedKey, HandleControl, KeyCode, Keyboard, KeyboardLayout, Modifiers, ScancodeSet1, layouts,
 };
 
+#[derive(Clone, Copy)]
+pub enum InputEvent {
+    Scancode(u8),
+    OpenTerminal,
+    CloseTerminal(usize),
+}
+
+pub fn desktop_action(event: InputEvent) {
+    if let Ok(queue) = SCANCODE_QUEUE.try_get() {
+        let _ = queue.push(event);
+        WAKER.wake();
+    }
+}
+
 static WAKER: AtomicWaker = AtomicWaker::new();
-static SCANCODE_QUEUE: OnceCell<ArrayQueue<u8>> = OnceCell::uninit();
+static SCANCODE_QUEUE: OnceCell<ArrayQueue<InputEvent>> = OnceCell::uninit();
 static DROPPED_SCANCODES: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) fn add_scancode(scancode: u8) {
     if let Ok(queue) = SCANCODE_QUEUE.try_get() {
-        if queue.push(scancode).is_err() {
+        if queue.push(InputEvent::Scancode(scancode)).is_err() {
             DROPPED_SCANCODES.fetch_add(1, Ordering::Relaxed);
         }
         WAKER.wake();
@@ -43,9 +57,9 @@ impl ScancodeStream {
 }
 
 impl Stream for ScancodeStream {
-    type Item = u8;
+    type Item = InputEvent;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<u8>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<InputEvent>> {
         let queue = SCANCODE_QUEUE
             .try_get()
             .expect("scancode queue not initialized");
@@ -97,12 +111,12 @@ pub async fn run_shell(info: SystemInfo) {
     let mut scancodes = ScancodeStream::new();
     let mut keyboard = decoder();
     crate::vga_buffer::set_active_terminal(0);
-    crate::vga_buffer::set_terminal_columns(0, 76);
-    let mut shells = [Some(Shell::new(info)), None];
+    let mut shells: [Option<Shell>; 2] = [None, None];
+    crate::vga_buffer::refresh();
     crate::vga_buffer::set_active_terminal(0);
     let mut dropped = dropped_scancodes();
 
-    while let Some(scancode) = scancodes.next().await {
+    while let Some(event) = scancodes.next().await {
         let current_dropped = dropped_scancodes();
         if current_dropped != dropped {
             // A missing break/prefix byte can leave Ctrl/Shift or the decoder
@@ -123,9 +137,20 @@ pub async fn run_shell(info: SystemInfo) {
             }
             continue;
         }
-        if let Ok(Some(key_event)) = keyboard.add_byte(scancode)
-            && let Some(key) = keyboard.process_keyevent(key_event)
-        {
+        let key = match event {
+            InputEvent::OpenTerminal => Some(DecodedKey::Unicode('\u{11}')),
+            InputEvent::CloseTerminal(index) => {
+                crate::desktop::close_terminal(index);
+                resize_open_shells(&mut shells, None);
+                None
+            }
+            InputEvent::Scancode(scancode) => keyboard
+                .add_byte(scancode)
+                .ok()
+                .flatten()
+                .and_then(|event| keyboard.process_keyevent(event)),
+        };
+        if let Some(key) = key {
             match key {
                 DecodedKey::Unicode('\u{3}') => {
                     let active = crate::desktop::active_terminal();

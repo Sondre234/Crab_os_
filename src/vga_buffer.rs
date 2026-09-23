@@ -39,6 +39,7 @@ const BLANK: ScreenChar = ScreenChar {
 };
 pub const BUFFER_HEIGHT: usize = 25;
 pub const BUFFER_WIDTH: usize = 80;
+const TERMINAL_ROWS: usize = 16;
 const SCREEN_CELLS: usize = BUFFER_HEIGHT * BUFFER_WIDTH;
 pub const SCROLLBACK_LINES: usize = 128;
 
@@ -144,7 +145,7 @@ impl Writer {
     }
 
     fn live_top(&self) -> usize {
-        self.last_line.saturating_sub(BUFFER_HEIGHT - 1)
+        self.last_line.saturating_sub(TERMINAL_ROWS - 1)
     }
 
     fn ensure_line(&mut self, line: usize) {
@@ -215,12 +216,12 @@ impl Writer {
     pub fn scroll_up(&mut self) {
         self.view_top = self
             .view_top
-            .saturating_sub(BUFFER_HEIGHT - 1)
+            .saturating_sub(TERMINAL_ROWS - 1)
             .max(self.first_line);
     }
 
     pub fn scroll_down(&mut self) {
-        self.view_top = (self.view_top + BUFFER_HEIGHT - 1).min(self.live_top());
+        self.view_top = (self.view_top + TERMINAL_ROWS - 1).min(self.live_top());
     }
 }
 
@@ -256,8 +257,13 @@ fn draw_window(
     } else {
         b" Terminal 2 - crabsh "
     };
+    let title_bg = if crate::desktop::active_terminal() == index {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
     for col in 0..width {
-        draw_cell(frame, y, x + col, b" ", Color::White, Color::DarkGray);
+        draw_cell(frame, y, x + col, b" ", Color::White, title_bg);
         draw_cell(frame, y + 19, x + col, b" ", Color::White, Color::DarkGray);
     }
     for row in 1..19 {
@@ -281,12 +287,16 @@ fn draw_window(
             );
         }
     }
-    let title_bg = if crate::desktop::active_terminal() == index {
-        Color::Blue
-    } else {
-        Color::DarkGray
-    };
-    draw_cell(frame, y, x, title, Color::White, title_bg);
+    draw_cell(frame, y, x + 1, title, Color::White, title_bg);
+    draw_cell(frame, y, x + width - 4, b"[x]", Color::White, Color::Red);
+    draw_cell(
+        frame,
+        y + 19,
+        x + 2,
+        b" crabsh / PS/2 ",
+        Color::LightGray,
+        Color::DarkGray,
+    );
 }
 
 impl fmt::Write for Writer {
@@ -312,22 +322,79 @@ fn render_desktop() {
 fn render_desktop_inner() {
     let buffer = 0xb8000 as *mut Volatile<ScreenChar>;
     let mut frame = FRAME.lock();
-    frame.fill(BLANK);
+    frame.fill(ScreenChar {
+        ascii_character: b' ',
+        color_code: (Color::Blue as u8) << 4 | Color::LightBlue as u8,
+    });
+    for row in 5..24 {
+        for col in 0..BUFFER_WIDTH {
+            if (row + col) % 12 == 0 {
+                draw_cell(&mut frame, row, col, b"\xfa", Color::LightBlue, Color::Blue);
+            }
+        }
+    }
+    for col in 0..BUFFER_WIDTH {
+        draw_cell(&mut frame, 0, col, b" ", Color::White, Color::Black);
+        draw_cell(&mut frame, 24, col, b" ", Color::LightGray, Color::Black);
+    }
     draw_cell(
         &mut frame,
         0,
+        2,
+        b"C R A B O S",
+        Color::LightCyan,
+        Color::Black,
+    );
+    draw_cell(
+        &mut frame,
         0,
-        b" CrabOS desktop   Ctrl+Q: open   Ctrl+C: close",
+        58,
+        b"DESKTOP / WORKSPACE 01",
+        Color::LightGray,
+        Color::Black,
+    );
+    draw_cell(&mut frame, 1, 4, b" +----+ ", Color::LightCyan, Color::Blue);
+    draw_cell(&mut frame, 2, 4, b" | >_ | ", Color::White, Color::Black);
+    draw_cell(&mut frame, 3, 3, b" Terminal ", Color::White, Color::Blue);
+    draw_cell(
+        &mut frame,
+        10,
+        29,
+        b"C R A B O S",
         Color::White,
         Color::Blue,
     );
     draw_cell(
         &mut frame,
-        0,
+        12,
         24,
-        b"Mouse: drag title bar; click terminal to focus",
+        b"A little shell. A lot of possibility.",
+        Color::LightCyan,
+        Color::Blue,
+    );
+    draw_cell(
+        &mut frame,
+        15,
+        24,
+        b"Click Terminal to get started",
         Color::LightGray,
-        Color::DarkGray,
+        Color::Blue,
+    );
+    draw_cell(
+        &mut frame,
+        24,
+        2,
+        b"Terminal: click icon / Ctrl+Q",
+        Color::LightCyan,
+        Color::Black,
+    );
+    draw_cell(
+        &mut frame,
+        24,
+        38,
+        b"Drag title to move   [x] / Ctrl+C: close",
+        Color::LightGray,
+        Color::Black,
     );
     let windows = crate::desktop::windows();
     let active = crate::desktop::active_terminal();
@@ -337,7 +404,7 @@ fn render_desktop_inner() {
         };
         draw_window(&mut frame, x as usize, y as usize, width as usize, index);
         let terminal = TERMINALS[index].lock();
-        for row in 0..16 {
+        for row in 0..TERMINAL_ROWS {
             let line = terminal.view_top + row;
             if line <= terminal.last_line {
                 for col in 0..(width as usize - 2) {
@@ -346,6 +413,16 @@ fn render_desktop_inner() {
                     frame[screen_index] = cell;
                 }
             }
+        }
+    }
+    if let Some((x, y, width)) = windows[active] {
+        let terminal = TERMINALS[active].lock();
+        if let Some(row) = terminal.cursor.line.checked_sub(terminal.view_top)
+            && row < TERMINAL_ROWS
+        {
+            let col = terminal.cursor.column.min(width as usize - 3);
+            let offset = (y as usize + 2 + row) * BUFFER_WIDTH + x as usize + 1 + col;
+            frame[offset].color_code = (Color::LightGray as u8) << 4 | Color::Black as u8;
         }
     }
     let (pointer_x, pointer_y) = crate::desktop::pointer();
@@ -438,12 +515,17 @@ fn editing_erases_wrapped_text_and_preserves_prompt() {
 
 #[test_case]
 fn rendered_vga_matches_console() {
+    let index = crate::desktop::open_terminal().unwrap();
     with_writer(|writer| {
         writer.clear();
         writer.write_string("CrabOS");
     });
-    let character = unsafe { (0xb8000 as *const ScreenChar).read_volatile() };
+    let (x, y, _) = crate::desktop::windows()[index].unwrap();
+    let offset = (y as usize + 2) * BUFFER_WIDTH + x as usize + 1;
+    let character = unsafe { (0xb8000 as *const ScreenChar).add(offset).read_volatile() };
     assert_eq!(character.ascii_character, b'C');
+    crate::desktop::close_terminal(index);
+    set_terminal_columns(index, BUFFER_WIDTH);
 }
 
 #[test_case]

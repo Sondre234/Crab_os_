@@ -15,11 +15,12 @@ the console.
 cargo run --locked
 ~~~
 
-Type commands in the terminal in QEMU's display window. Click a terminal to
-focus it, or drag its title bar to move it. Ctrl+Q opens another terminal;
-Ctrl+C closes the focused terminal. One terminal fills the desktop width; two
-share it equally. The guest uses a US keyboard layout, regardless of the host
-layout. QEMU's usual Ctrl+Alt+G releases captured input.
+Click the Terminal desktop icon to open crabsh, then type in QEMU's display
+window. Click a terminal to focus it, or drag its title bar to move it. Ctrl+Q
+opens another terminal; Ctrl+C or the title-bar [x] closes a terminal. The
+desktop starts with no windows open. One terminal uses most of the desktop
+width; two share it equally. The guest uses a US keyboard layout, regardless
+of the host layout. QEMU's usual Ctrl+Alt+G releases captured input.
 
 To build an image without opening a window:
 
@@ -34,8 +35,8 @@ target/x86_64-crab_os/debug/bootimage-crab_os.bin
 
 ## Console
 
-The console has an 80×25 display, colors, a hardware cursor, wrapped input, and
-a 128-line screen/scrollback ring. Input is bounded to 256 ASCII bytes. History
+The console has an 80×25 display, colors, a visible text cursor, wrapped input,
+and a 128-line screen/scrollback ring. Input is bounded to 256 ASCII bytes. History
 keeps the last 16 nonempty commands, omitting consecutive duplicates; Down
 restores the draft you were typing before browsing history.
 
@@ -119,7 +120,7 @@ keyboard decoding, CPU detection, allocation, boot and exception handling.
 The Python smoke test uses only the standard library and drives actual emulated
 PS/2 keys, then checks physical VGA memory. It covers boot, editing, quoting,
 completion, history, command errors, input bounds, scrolling, and system
-commands. Its QEMU uses a temporary disk snapshot and no network, and exits
+commands, mouse launching, closing, dragging, and reopening history. Its QEMU uses a temporary disk snapshot and no network, and exits
 when the test finishes.
 
 If the rolling nightly toolchain leaves incompatible cached metadata, run check
