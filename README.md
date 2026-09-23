@@ -59,7 +59,9 @@ overflow also discards partial input and resets the decoder.
 | Ctrl+L | Clear screen/scrollback while preserving the command |
 
 Typing or editing returns to the live display after scrolling. Closing a
-terminal keeps its session available to reopen with Ctrl+Q.
+terminal keeps its command history for reopening; changing the number of
+windows clears displayed output and any unfinished command so text fits the new
+width.
 
 ## Commands
 
