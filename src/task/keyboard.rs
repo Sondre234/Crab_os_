@@ -97,11 +97,8 @@ pub async fn run_shell(info: SystemInfo) {
     let mut scancodes = ScancodeStream::new();
     let mut keyboard = decoder();
     crate::vga_buffer::set_active_terminal(0);
-    crate::vga_buffer::with_writer(|writer| writer.set_columns(36));
-    let mut first_shell = Shell::new(info);
-    crate::vga_buffer::set_active_terminal(1);
-    crate::vga_buffer::with_writer(|writer| writer.set_columns(36));
-    let mut second_shell = Shell::new(info);
+    crate::vga_buffer::set_terminal_columns(0, 76);
+    let mut shells = [Some(Shell::new(info)), None];
     crate::vga_buffer::set_active_terminal(0);
     let mut dropped = dropped_scancodes();
 
@@ -117,21 +114,60 @@ pub async fn run_shell(info: SystemInfo) {
             });
             keyboard = decoder();
             dropped = current_dropped;
-            match crate::desktop::active_terminal() {
-                0 => first_shell.input_lost(),
-                _ => second_shell.input_lost(),
+            let active = crate::desktop::active_terminal();
+            if crate::desktop::is_open(active) {
+                if let Some(shell) = shells[active].as_mut() {
+                    crate::vga_buffer::set_active_terminal(active);
+                    shell.input_lost();
+                }
             }
             continue;
         }
         if let Ok(Some(key_event)) = keyboard.add_byte(scancode)
             && let Some(key) = keyboard.process_keyevent(key_event)
         {
-            match crate::desktop::active_terminal() {
-                0 => first_shell.handle_key(key),
-                _ => second_shell.handle_key(key),
+            match key {
+                DecodedKey::Unicode('\u{3}') => {
+                    let active = crate::desktop::active_terminal();
+                    if crate::desktop::is_open(active) {
+                        crate::desktop::close_active();
+                        resize_open_shells(&mut shells, None);
+                    }
+                }
+                DecodedKey::Unicode('\u{11}') => {
+                    if let Some(index) = crate::desktop::open_terminal() {
+                        let created = shells[index].is_none();
+                        if created {
+                            crate::vga_buffer::set_active_terminal(index);
+                            shells[index] = Some(Shell::new(info));
+                        }
+                        resize_open_shells(&mut shells, created.then_some(index));
+                    }
+                }
+                _ => {
+                    let active = crate::desktop::active_terminal();
+                    if crate::desktop::is_open(active) {
+                        crate::vga_buffer::set_active_terminal(active);
+                        if let Some(shell) = shells[active].as_mut() {
+                            shell.handle_key(key);
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+fn resize_open_shells(shells: &mut [Option<Shell>; 2], fresh: Option<usize>) {
+    for index in 0..2 {
+        if crate::desktop::is_open(index) && fresh != Some(index) {
+            crate::vga_buffer::set_active_terminal(index);
+            if let Some(shell) = shells[index].as_mut() {
+                shell.reset_for_resize();
+            }
+        }
+    }
+    crate::vga_buffer::set_active_terminal(crate::desktop::active_terminal());
 }
 
 #[test_case]

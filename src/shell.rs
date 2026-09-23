@@ -268,6 +268,13 @@ impl Shell {
         }
     }
 
+    /// Clear this terminal's old layout and anchor a fresh prompt after resize.
+    pub fn reset_for_resize(&mut self) {
+        vga_buffer::with_writer(|writer| writer.clear());
+        self.line = Line::new();
+        self.anchor = Self::prompt();
+    }
+
     fn prompt() -> Position {
         vga_buffer::with_writer(|writer| {
             writer.set_color(Color::LightGreen, Color::Black);
@@ -489,7 +496,8 @@ impl Shell {
                 println!("\nEditing: Left/Right, Home/End, Backspace/Delete, Tab completion");
                 println!("History: Up/Down or Ctrl+P/N; scrollback: PageUp/PageDown");
                 println!("Ctrl+A/E: start/end; Ctrl+U/K: erase to start/end; Ctrl+W: word");
-                println!("Ctrl+C: cancel input; Ctrl+L: clear and redraw; Ctrl+D: delete");
+                println!("Ctrl+C: close terminal; Ctrl+Q: open terminal");
+                println!("Ctrl+L: clear and redraw; Ctrl+D: delete at cursor");
                 println!("US keyboard, ASCII input, 256 bytes/line, 16 history entries.");
                 println!("Built-in commands only; no filesystem or external programs yet.");
             }

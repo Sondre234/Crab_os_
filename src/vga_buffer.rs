@@ -108,6 +108,12 @@ pub fn set_active_terminal(index: usize) {
     ACTIVE_TERMINAL.store(index.min(1), Ordering::Relaxed);
 }
 
+pub fn set_terminal_columns(index: usize, columns: usize) {
+    interrupts::without_interrupts(|| {
+        TERMINALS[index.min(1)].lock().set_columns(columns);
+    });
+}
+
 pub fn active_terminal() -> usize {
     ACTIVE_TERMINAL.load(Ordering::Relaxed)
 }
@@ -238,20 +244,33 @@ fn draw_cell(
     }
 }
 
-fn draw_window(frame: &mut [ScreenChar; SCREEN_CELLS], x: usize, y: usize, index: usize) {
+fn draw_window(
+    frame: &mut [ScreenChar; SCREEN_CELLS],
+    x: usize,
+    y: usize,
+    width: usize,
+    index: usize,
+) {
     let title = if index == 0 {
         b" Terminal 1 - crabsh " as &[u8]
     } else {
         b" Terminal 2 - crabsh "
     };
-    for col in 0..38 {
+    for col in 0..width {
         draw_cell(frame, y, x + col, b" ", Color::White, Color::DarkGray);
         draw_cell(frame, y + 19, x + col, b" ", Color::White, Color::DarkGray);
     }
     for row in 1..19 {
         draw_cell(frame, y + row, x, b" ", Color::White, Color::DarkGray);
-        draw_cell(frame, y + row, x + 37, b" ", Color::White, Color::DarkGray);
-        for col in 1..37 {
+        draw_cell(
+            frame,
+            y + row,
+            x + width - 1,
+            b" ",
+            Color::White,
+            Color::DarkGray,
+        );
+        for col in 1..width - 1 {
             draw_cell(
                 frame,
                 y + row,
@@ -298,7 +317,7 @@ fn render_desktop_inner() {
         &mut frame,
         0,
         0,
-        b" CrabOS desktop   [1] Terminal  [2] Terminal",
+        b" CrabOS desktop   Ctrl+Q: open   Ctrl+C: close",
         Color::White,
         Color::Blue,
     );
@@ -306,20 +325,22 @@ fn render_desktop_inner() {
         &mut frame,
         0,
         24,
-        b"PS/2 mouse: drag title bars; click to focus",
+        b"Mouse: drag title bar; click terminal to focus",
         Color::LightGray,
         Color::DarkGray,
     );
     let windows = crate::desktop::windows();
     let active = crate::desktop::active_terminal();
     for index in [1 - active, active] {
-        let (x, y) = windows[index];
-        draw_window(&mut frame, x as usize, y as usize, index);
+        let Some((x, y, width)) = windows[index] else {
+            continue;
+        };
+        draw_window(&mut frame, x as usize, y as usize, width as usize, index);
         let terminal = TERMINALS[index].lock();
         for row in 0..16 {
             let line = terminal.view_top + row;
             if line <= terminal.last_line {
-                for col in 0..36 {
+                for col in 0..(width as usize - 2) {
                     let cell = terminal.lines[line % SCROLLBACK_LINES][col];
                     let screen_index = (y as usize + 2 + row) * BUFFER_WIDTH + x as usize + 1 + col;
                     frame[screen_index] = cell;

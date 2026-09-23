@@ -1,7 +1,8 @@
 # CrabOS
 
-A small x86_64 Rust kernel with a mouse-driven, two-window VGA text desktop.
-Each terminal runs **crabsh** with separate command history and scrollback.
+A small x86_64 Rust kernel with a mouse-driven VGA text desktop that supports
+one or two terminal windows. Each runs **crabsh** with separate history and
+scrollback.
 
 ## Run
 
@@ -14,9 +15,11 @@ the console.
 cargo run --locked
 ~~~
 
-Type commands in either terminal in QEMU's display window. Click a terminal to
-focus it, or drag its title bar to move it. The guest uses a US keyboard layout,
-regardless of the host layout. QEMU's usual Ctrl+Alt+G releases captured input.
+Type commands in the terminal in QEMU's display window. Click a terminal to
+focus it, or drag its title bar to move it. Ctrl+Q opens another terminal;
+Ctrl+C closes the focused terminal. One terminal fills the desktop width; two
+share it equally. The guest uses a US keyboard layout, regardless of the host
+layout. QEMU's usual Ctrl+Alt+G releases captured input.
 
 To build an image without opening a window:
 
@@ -51,11 +54,12 @@ overflow also discards partial input and resets the decoder.
 | PageUp / PageDown | Browse scrollback |
 | Ctrl+U / Ctrl+K | Erase to start / end |
 | Ctrl+W | Erase the previous word |
-| Ctrl+C | Cancel input and start a fresh prompt |
+| Ctrl+C | Close the focused terminal |
+| Ctrl+Q | Open another terminal |
 | Ctrl+L | Clear screen/scrollback while preserving the command |
 
-Typing or editing returns to the live display after scrolling. Ctrl+C cancels
-the editor; there are no background processes or Unix signals yet.
+Typing or editing returns to the live display after scrolling. Closing a
+terminal keeps its session available to reopen with Ctrl+Q.
 
 ## Commands
 
