@@ -35,6 +35,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "Find the supported Intel I225-V Ethernet controller",
     ),
     ("net", "Show Ethernet controller and link status"),
+    ("browse", "Open a plain HTTP page in the terminal"),
 ];
 
 #[derive(Clone, Copy)]
@@ -489,6 +490,26 @@ impl Shell {
             }
             "fastfetch" if args.len == 2 && args.get(1) == "--version" => {
                 println!("CrabOS native fastfetch {VERSION} (not the upstream program)");
+            }
+            "browse" => {
+                if args.len != 2 {
+                    println!("usage: browse http://host/path");
+                    return;
+                }
+                let url = match crate::net::web::Url::parse(args.get(1)) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        println!("browse: {}", error);
+                        return;
+                    }
+                };
+                println!("Loading {}", args.get(1));
+                match crate::net::fetch(&url)
+                    .and_then(|response| crate::net::web::render(&response))
+                {
+                    Ok(page) => println!("{}", page),
+                    Err(error) => println!("browse: {}", error),
+                }
             }
             _ if !COMMANDS.iter().any(|(name, _)| *name == command) => {
                 println!("crabsh: {command}: command not found. Try 'help'.");

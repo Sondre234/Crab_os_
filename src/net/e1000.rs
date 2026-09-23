@@ -209,6 +209,11 @@ impl E1000 {
         self.tx_next = (index + 1) % RING_SIZE;
         self.write(0x3818, self.tx_next as u32);
     }
+
+    fn transmit_ready(&self) -> bool {
+        let dma = unsafe { &*self.dma };
+        (unsafe { read_volatile(&dma.tx[self.tx_next].status) }) & 1 != 0
+    }
 }
 
 pub struct ReceiveToken(Vec<u8>);
@@ -241,12 +246,15 @@ impl Device for E1000 {
     type TxToken<'a> = TransmitToken<'a>;
 
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
+        if !self.transmit_ready() {
+            return None;
+        }
         let packet = self.receive_packet()?;
         Some((ReceiveToken(packet), TransmitToken(self)))
     }
 
     fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
-        Some(TransmitToken(self))
+        self.transmit_ready().then_some(TransmitToken(self))
     }
 
     fn capabilities(&self) -> DeviceCapabilities {

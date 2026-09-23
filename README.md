@@ -22,6 +22,8 @@ cargo bootimage --locked
 qemu-system-x86_64 -m 128M -drive format=raw,file=target/x86_64-crab_os/debug/bootimage-crab_os.bin,snapshot=on -nic user,model=e1000
 ~~~
 
+Open a terminal and run `browse http://example.com/` to fetch a page.
+
 Click the Terminal desktop icon to open crabsh, then type in QEMU's display
 window. Click a terminal to focus it, or drag its title bar to move it. Ctrl+Q
 opens another terminal; Ctrl+C or the title-bar [x] closes a terminal. The
@@ -86,6 +88,7 @@ width.
 | whoami / hostname | Console identity |
 | lspci | Detect an Intel I225-V Ethernet controller |
 | net | Show the QEMU e1000 MAC address and link state |
+| browse http://host/path | Fetch and show a plain HTTP page as text |
 
 Commands accept --help; fastfetch also accepts --version. For example:
 
@@ -109,9 +112,14 @@ allocation bytes, excluding allocator metadata, size-class padding, and cached
 blocks. Boot-usable RAM is not current free RAM.
 
 The guest identity is a console label, not an authentication system. There is
-no filesystem, process loader, userspace, or network stack. The desktop is a
-kernel VGA text-mode interface, not a graphical userspace environment. Porting
-upstream Fastfetch needs additional runtime and OS interfaces.
+no filesystem, process loader, or userspace. The desktop is a kernel VGA
+text-mode interface. In QEMU with the e1000 adapter enabled, `browse` obtains
+IPv4 configuration through DHCP, resolves names with DNS, and fetches plain
+HTTP pages. It displays text from HTML without images, scripts, CSS, forms,
+or links. HTTPS is not supported. The physical Intel I225-V is detected but
+does not yet have a driver. This BIOS boot image is not a UEFI boot path for
+the physical PC. Porting upstream Fastfetch needs additional runtime and OS
+interfaces.
 
 ## Verification
 
@@ -123,6 +131,7 @@ cargo fmt --check
 cargo bootimage --locked
 python tests/smoke_console.py --screenshot target/console.ppm
 python tests/smoke_console.py --nic
+python tests/smoke_console.py --nic --internet
 ~~~
 
 Kernel tests run inside QEMU and cover the editor, parser, history, display,
@@ -145,6 +154,10 @@ and clippy with --target-dir target/console-check to use a separate build cache.
 - src/task/keyboard.rs: interrupt-fed keyboard stream and layout decoding.
 - src/task/executor.rs: async task scheduling and sleeping while idle.
 - src/interrupts.rs: keyboard IRQs and the PIT uptime clock.
+- src/pci.rs: PCI detection and bus-master configuration.
+- src/net/e1000.rs: QEMU e1000 transmit and receive rings.
+- src/net/mod.rs: DHCP, DNS and TCP page fetching.
+- src/net/web.rs: HTTP URL parsing and HTML-to-text rendering.
 
 Console rendering runs with interrupts briefly disabled. Interrupt handlers
 queue keyboard bytes and count timer ticks; they do not print over the prompt.

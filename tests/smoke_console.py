@@ -5,11 +5,13 @@ Run cargo bootimage --locked, then python tests/smoke_console.py.
 Uses only Python's standard library.
 """
 import argparse
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 
 
@@ -47,6 +49,7 @@ class Console:
             "'": ("apostrophe",), '"': ("shift", "apostrophe"),
             "\\": ("backslash",), "|": ("shift", "backslash"),
             "?": ("shift", "slash"), ".": ("dot",),
+            ":": ("shift", "semicolon"), "/": ("slash",),
         }
         for character in text:
             if character.isascii() and character.isalnum():
@@ -117,7 +120,7 @@ class Console:
         self.type("clear\n")
 
 
-def exercise(console, screenshot, nic=False):
+def exercise(console, screenshot, nic=False, http_port=None, internet=False):
     console.expect("Click Terminal to get started", timeout=15)
     if screenshot:
         console.command("screendump", {"filename": str(screenshot.with_stem("desktop-empty").resolve())})
@@ -130,6 +133,11 @@ def exercise(console, screenshot, nic=False):
         console.type("net\n")
         console.expect("QEMU e1000")
         console.expect("link up")
+        console.type(f"browse http://10.0.2.2:{http_port}/\n")
+        console.expect("CrabOS network OK", timeout=15)
+        if internet:
+            console.type("browse http://example.com/\n")
+            console.expect("HTTP/", timeout=15)
     print("PASS: boot, native fastfetch and prompt", flush=True)
 
     console.clean()
@@ -263,11 +271,28 @@ def main():
                         default=Path("target/x86_64-crab_os/debug/bootimage-crab_os.bin"))
     parser.add_argument("--screenshot", type=Path, help="Optional PPM screenshot output")
     parser.add_argument("--nic", action="store_true")
+    parser.add_argument("--internet", action="store_true")
     args = parser.parse_args()
     if not args.image.is_file():
         parser.error("boot image missing; run cargo bootimage --locked first")
     with tempfile.TemporaryDirectory(prefix="crabos-console-") as directory:
         directory = Path(directory)
+        server = None
+        if args.nic:
+            class Handler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    data = b"<h1>CrabOS network OK</h1>"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+
+                def log_message(self, *_):
+                    pass
+
+            server = HTTPServer(("127.0.0.1", 0), Handler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
         endpoint = directory / "qmp.sock"
         process = subprocess.Popen([
             "qemu-system-x86_64", "-m", "128M", "-display", "none",
@@ -301,7 +326,8 @@ def main():
                     assert "QMP" in greeting, greeting
                     console = Console(stream, directory)
                     console.command("qmp_capabilities")
-                    exercise(console, args.screenshot, args.nic)
+                    exercise(console, args.screenshot, args.nic,
+                             server.server_port if server else None, args.internet)
         finally:
             process.terminate()
             try:
@@ -309,6 +335,9 @@ def main():
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+            if server:
+                server.shutdown()
+                server.server_close()
 
 
 if __name__ == "__main__":

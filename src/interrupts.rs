@@ -86,6 +86,10 @@ pub fn uptime_seconds() -> u64 {
         + ticks % PIT_FREQUENCY * u64::from(PIT_DIVISOR) / PIT_FREQUENCY
 }
 
+pub fn uptime_millis() -> i64 {
+    (TICKS.load(Ordering::Relaxed) * u64::from(PIT_DIVISOR) * 1000 / PIT_FREQUENCY) as i64
+}
+
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
     println!("EXCEPTION: BREAKPOINT\n{:?}", stack_frame);
 }
