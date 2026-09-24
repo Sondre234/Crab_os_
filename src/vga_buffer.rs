@@ -1,9 +1,8 @@
-//! VGA text console with bounded scrollback and a hardware cursor.
+//! Text console cells with bounded scrollback, rendered to the framebuffer.
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
-use volatile::Volatile;
-use x86_64::instructions::{interrupts, port::Port};
+use x86_64::instructions::interrupts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -320,7 +319,6 @@ fn render_desktop() {
 }
 
 fn render_desktop_inner() {
-    let buffer = 0xb8000 as *mut Volatile<ScreenChar>;
     let mut frame = FRAME.lock();
     frame.fill(ScreenChar {
         ascii_character: b' ',
@@ -437,17 +435,18 @@ fn render_desktop_inner() {
     let mut previous = PREVIOUS_FRAME.lock();
     for index in 0..SCREEN_CELLS {
         if !previous.valid || previous.cells[index] != frame[index] {
-            unsafe { (*buffer.add(index)).write(frame[index]) };
+            let cell = frame[index];
+            crate::framebuffer::draw_cell(
+                index % BUFFER_WIDTH,
+                index / BUFFER_WIDTH,
+                cell.ascii_character,
+                cell.color_code,
+            );
             previous.cells[index] = frame[index];
         }
     }
-    previous.valid = true;
-    unsafe {
-        let mut index = Port::<u8>::new(0x3d4);
-        let mut data = Port::<u8>::new(0x3d5);
-        index.write(0x0a);
-        data.write(0x20);
-    }
+    // Until a framebuffer exists nothing is drawn, so nothing is cached.
+    previous.valid = crate::framebuffer::available();
 }
 
 /// Redraw the current console and desktop without changing its contents.
@@ -514,7 +513,7 @@ fn editing_erases_wrapped_text_and_preserves_prompt() {
 }
 
 #[test_case]
-fn rendered_vga_matches_console() {
+fn rendered_frame_matches_console() {
     let index = crate::desktop::open_terminal().unwrap();
     with_writer(|writer| {
         writer.clear();
@@ -522,8 +521,7 @@ fn rendered_vga_matches_console() {
     });
     let (x, y, _) = crate::desktop::windows()[index].unwrap();
     let offset = (y as usize + 2) * BUFFER_WIDTH + x as usize + 1;
-    let character = unsafe { (0xb8000 as *const ScreenChar).add(offset).read_volatile() };
-    assert_eq!(character.ascii_character, b'C');
+    assert_eq!(FRAME.lock()[offset].ascii_character, b'C');
     crate::desktop::close_terminal(index);
     set_terminal_columns(index, BUFFER_WIDTH);
 }

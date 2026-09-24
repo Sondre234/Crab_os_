@@ -4,26 +4,27 @@
 #![test_runner(crab_os::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use bootloader::{BootInfo, entry_point};
 use core::panic::PanicInfo;
-use crab_os::memory::{self, BootInfoFrameAllocator};
-use crab_os::println;
+use crab_os::boot::BootInfo;
 use crab_os::system::SystemInfo;
 use crab_os::task::executor::Executor;
 use crab_os::task::{Task, keyboard};
-use x86_64::VirtAddr;
+use crab_os::{entry_point, println};
 
 entry_point!(kernel_main);
 
-fn kernel_main(boot_info: &'static BootInfo) -> ! {
-    crab_os::init();
-    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-    let mut mapper = unsafe { memory::init(phys_mem_offset) };
-    let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
-    crab_os::allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap init failed");
+fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
+    crab_os::init(boot_info);
+    let BootInfo {
+        mapper,
+        frame_allocator,
+        physical_memory_offset,
+        ..
+    } = boot_info;
+    crab_os::allocator::init_heap(mapper, frame_allocator).expect("heap init failed");
 
     #[cfg(not(test))]
-    if let Err(error) = crab_os::net::init(&mut mapper, &mut frame_allocator, phys_mem_offset) {
+    if let Err(error) = crab_os::net::init(mapper, frame_allocator, *physical_memory_offset) {
         crab_os::serial_println!("Network initialization failed: {}", error);
     }
 
@@ -35,7 +36,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     #[cfg(not(test))]
     {
-        let info = SystemInfo::new(&boot_info.memory_map);
+        let info = SystemInfo::new(boot_info.memory_regions);
         let mut executor = Executor::new();
         executor.spawn(Task::new(keyboard::run_shell(info)));
         executor.spawn(Task::new(crab_os::desktop::run_redraw_worker()));

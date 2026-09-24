@@ -1,6 +1,6 @@
 //! Small text-mode desktop layout and PS/2 mouse window dragging.
 //!
-//! The current kernel uses VGA text mode, so windows are character-cell panels.
+//! The console is an 80x25 cell grid, so windows are character-cell panels.
 use core::future::poll_fn;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::Poll;
@@ -198,7 +198,7 @@ pub fn pointer() -> (i16, i16) {
     })
 }
 
-/// Snapshot window locations for the VGA renderer.
+/// Snapshot window locations for the console renderer.
 pub fn windows() -> [Option<(i16, i16, i16)>; 2] {
     interrupts::without_interrupts(|| {
         let desktop = DESKTOP.lock();

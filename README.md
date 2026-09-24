@@ -1,28 +1,30 @@
 # CrabOS
 
-A small x86_64 Rust kernel with a mouse-driven VGA text desktop that supports
+A small x86_64 Rust kernel, booted directly by UEFI, with a mouse-driven text
+desktop that supports
 one or two terminal windows. Each runs **crabsh** with separate history and
 scrollback.
 
 ## Run
 
-The repository uses its existing nightly Rust toolchain, a custom target, the
-bootloader 0.9 series, cargo-bootimage, and QEMU. Rust source and LLVM tools must
-be available for building the boot image. No dependency changes are needed for
-the console.
+The kernel is a UEFI application (`crab_os.efi`) built with the nightly
+toolchain for the custom `x86_64-crab_os.json` target. That target is the stock
+`x86_64-unknown-uefi` spec without `singlethread`, so atomics stay real atomics
+once more cores are brought up. Running needs QEMU and OVMF firmware
+(`edk2-ovmf` on Arch; override the paths with `OVMF_CODE` / `OVMF_VARS`).
 
 ~~~sh
 cargo run --locked
 ~~~
 
-To run with QEMU's emulated Intel e1000 Ethernet adapter and user networking:
+`scripts/qemu.sh` is the Cargo runner. It copies the image to a temporary ESP
+as `EFI/BOOT/BOOTX64.EFI` and boots a q35 machine with OVMF, COM1 on stdio and
+QEMU's emulated Intel e1000 with user networking. Extra arguments are passed to
+QEMU. Open a terminal and run `browse http://example.com/` to fetch a page.
 
-~~~sh
-cargo bootimage --locked
-qemu-system-x86_64 -m 128M -drive format=raw,file=target/x86_64-crab_os/debug/bootimage-crab_os.bin,snapshot=on -nic user,model=e1000
-~~~
-
-Open a terminal and run `browse http://example.com/` to fetch a page.
+To boot a physical PC, copy `target/x86_64-crab_os/debug/crab_os.efi` to
+`EFI/BOOT/BOOTX64.EFI` on a FAT32 USB stick and boot it with Secure Boot off.
+Keyboard and mouse still need PS/2 or firmware USB legacy emulation.
 
 Click the Terminal desktop icon to open crabsh, then type in QEMU's display
 window. Click a terminal to focus it, or drag its title bar to move it. Ctrl+Q
@@ -31,16 +33,15 @@ desktop starts with no windows open. One terminal uses most of the desktop
 width; two share it equally. The guest uses a US keyboard layout, regardless
 of the host layout. QEMU's usual Ctrl+Alt+G releases captured input.
 
-To build an image without opening a window:
+## Boot
 
-~~~sh
-cargo bootimage --locked
-~~~
-
-The image is written to
-~~~text
-target/x86_64-crab_os/debug/bootimage-crab_os.bin
-~~~
+`src/boot.rs` defines `efi_main` through `entry_point!`. It records the GOP
+framebuffer and the ACPI RSDP, exits boot services, copies the memory map,
+builds kernel-owned page tables that identity map RAM, the low 4 GiB and the
+framebuffer (1 GiB pages when the CPU supports them), then switches to a
+512 KiB kernel stack with an unmapped guard page before calling the kernel with
+a `BootInfo`. The frame allocator only hands out conventional memory above
+1 MiB; boot-services memory is left alone for now.
 
 ## Console
 
@@ -106,19 +107,18 @@ arguments produce an error. Shell expansion, pipes, redirection, and command
 chaining are not implemented.
 
 This fastfetch is a CrabOS built-in, not the upstream Fastfetch executable.
-CPU identity comes from CPUID, boot-usable RAM from the bootloader memory map,
+CPU identity comes from CPUID, boot-usable RAM from the UEFI memory map,
 and uptime from a programmed PIT. The heap figure measures live requested
 allocation bytes, excluding allocator metadata, size-class padding, and cached
 blocks. Boot-usable RAM is not current free RAM.
 
 The guest identity is a console label, not an authentication system. There is
-no filesystem, process loader, or userspace. The desktop is a kernel VGA
-text-mode interface. In QEMU with the e1000 adapter enabled, `browse` obtains
+no filesystem, process loader, or userspace. The desktop is an 80×25 cell
+interface drawn into the UEFI framebuffer with an 8×8 bitmap font scaled to fit. In QEMU with the e1000 adapter enabled, `browse` obtains
 IPv4 configuration through DHCP, resolves names with DNS, and fetches plain
 HTTP pages. It displays text from HTML without images, scripts, CSS, forms,
 or links. HTTPS is not supported. The physical Intel I225-V is detected but
-does not yet have a driver. This BIOS boot image is not a UEFI boot path for
-the physical PC. Porting upstream Fastfetch needs additional runtime and OS
+does not yet have a driver. Porting upstream Fastfetch needs additional runtime and OS
 interfaces.
 
 ## Verification
@@ -128,26 +128,20 @@ cargo test --locked
 cargo check --all-targets --locked
 cargo clippy --all-targets --locked
 cargo fmt --check
-cargo bootimage --locked
-python tests/smoke_console.py --screenshot target/console.ppm
-python tests/smoke_console.py --nic
-python tests/smoke_console.py --nic --internet
 ~~~
 
 Kernel tests run inside QEMU and cover the editor, parser, history, display,
-keyboard decoding, CPU detection, allocation, boot and exception handling.
-The Python smoke test uses only the standard library and drives actual emulated
-PS/2 keys, then checks physical VGA memory. It covers boot, editing, quoting,
-completion, history, command errors, input bounds, scrolling, and system
-commands, mouse launching, closing, dragging, and reopening history. Its QEMU uses a temporary disk snapshot and no network, and exits
-when the test finishes.
+keyboard decoding, CPU detection, allocation, boot and exception handling,
+including a stack overflow hitting the kernel stack guard page.
 
 If the rolling nightly toolchain leaves incompatible cached metadata, run check
 and clippy with --target-dir target/console-check to use a separate build cache.
 
 ## Source map
 
-- src/vga_buffer.rs: screen history, wrapping, rendering and hardware cursor.
+- src/boot.rs: UEFI entry, boot-services exit, page-table and stack handoff.
+- src/framebuffer.rs: GOP framebuffer and glyph rendering of console cells.
+- src/vga_buffer.rs: screen history, wrapping and desktop cell rendering.
 - src/desktop.rs: draggable terminal windows and mouse focus.
 - src/shell.rs: bounded line editor, history, command parser and built-ins.
 - src/system.rs: boot/CPU facts and the fastfetch display.

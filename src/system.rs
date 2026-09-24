@@ -1,5 +1,5 @@
-//! Facts collected from the bootloader and processor, with no guessed hardware.
-use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
+//! Facts collected from the firmware and processor, with no guessed hardware.
+use crate::boot::{MemoryKind, MemoryRegion};
 use core::arch::x86_64::__cpuid;
 use core::fmt::Write;
 
@@ -16,11 +16,11 @@ pub struct SystemInfo {
 }
 
 impl SystemInfo {
-    pub fn new(memory_map: &MemoryMap) -> Self {
-        let usable_memory = memory_map
+    pub fn new(memory_regions: &[MemoryRegion]) -> Self {
+        let usable_memory = memory_regions
             .iter()
-            .filter(|region| region.region_type == MemoryRegionType::Usable)
-            .map(|region| region.range.end_addr() - region.range.start_addr())
+            .filter(|region| region.kind == MemoryKind::Usable)
+            .map(|region| region.pages * 4096)
             .sum();
         // CPUID is available on x86_64; extended leaves are checked first.
         let base = unsafe { __cpuid(0) };
@@ -131,7 +131,7 @@ impl SystemInfo {
                     )
                     .unwrap(),
                     9 => write!(writer, "crabsh (built-in)").unwrap(),
-                    10 => write!(writer, "VGA 80x25 / PS/2").unwrap(),
+                    10 => write!(writer, "UEFI GOP 80x25 / PS/2").unwrap(),
                     11 => {
                         for color in [
                             Color::Red,
@@ -159,7 +159,7 @@ impl SystemInfo {
 
 #[test_case]
 fn cpu_detection_and_empty_memory_map() {
-    let info = SystemInfo::new(&MemoryMap::new());
+    let info = SystemInfo::new(&[]);
     assert!(!info.cpu_name().is_empty());
     assert_eq!(info.usable_memory, 0);
 }
