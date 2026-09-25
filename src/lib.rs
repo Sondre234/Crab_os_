@@ -5,7 +5,9 @@
 #![reexport_test_harness_main = "test_main"]
 #![feature(abi_x86_interrupt)]
 pub mod allocator;
+pub mod boot;
 pub mod desktop;
+pub mod framebuffer;
 pub mod gdt;
 pub mod interrupts;
 pub mod memory;
@@ -71,15 +73,11 @@ fn panic(info: &PanicInfo) -> ! {
     test_panic_handler(info)
 }
 
-// #[cfg(test)]
-// #[unsafe(no_mangle)]
-// pub extern "C" fn _start() -> ! {
-//     init();
-//     test_main();
-//     hlt_loop();
-// }
-
-pub fn init() {
+/// Bring up the display and CPU tables, then enable interrupts.
+pub fn init(boot_info: &boot::BootInfo) {
+    if let Some(framebuffer) = boot_info.framebuffer {
+        framebuffer::init(framebuffer);
+    }
     gdt::init();
     interrupts::init_idt();
     unsafe { interrupts::PICS.lock().initialize() };
@@ -95,18 +93,13 @@ pub fn hlt_loop() -> ! {
 }
 
 #[cfg(test)]
-use bootloader::{BootInfo, entry_point};
-
-#[cfg(test)]
 entry_point!(test_kernel_main);
 
 #[cfg(test)]
-fn test_kernel_main(boot_info: &'static BootInfo) -> ! {
-    init();
-    let physical_memory_offset = x86_64::VirtAddr::new(boot_info.physical_memory_offset);
-    let mut mapper = unsafe { memory::init(physical_memory_offset) };
-    let mut frame_allocator = unsafe { memory::BootInfoFrameAllocator::init(&boot_info.memory_map) };
-    allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap init failed");
+fn test_kernel_main(boot_info: &'static mut boot::BootInfo) -> ! {
+    init(boot_info);
+    allocator::init_heap(&mut boot_info.mapper, &mut boot_info.frame_allocator)
+        .expect("heap init failed");
     test_main();
     hlt_loop();
 }
